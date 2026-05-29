@@ -1152,6 +1152,10 @@ function SourceControlInner(): React.JSX.Element {
   const trackConflictPath = useAppStore((s) => s.trackConflictPath)
   const openDiff = useAppStore((s) => s.openDiff)
   const openFile = useAppStore((s) => s.openFile)
+  const pinFile = useAppStore((s) => s.pinFile)
+  // Opt-in preview tabs: single-click diff opens are temporary (preview) only
+  // when this setting is on; otherwise every open path stays permanent.
+  const previewEnabled = useAppStore((s) => s.settings?.editorPreviewTabsEnabled === true)
   const setEditorViewMode = useAppStore((s) => s.setEditorViewMode)
   const setMarkdownViewMode = useAppStore((s) => s.setMarkdownViewMode)
   const setPendingEditorReveal = useAppStore((s) => s.setPendingEditorReveal)
@@ -3089,6 +3093,9 @@ function SourceControlInner(): React.JSX.Element {
         if (entry.conflictStatus === 'unresolved') {
           trackConflictPath(activeWorktreeId, entry.path, entry.conflictKind)
         }
+        // Why: conflicts always open permanent — opening a conflict is an
+        // intentional action, so it never becomes a preview tab (no preview
+        // field passed), but it still honors split-group routing.
         openConflictFile(activeWorktreeId, worktreePath, entry, detectLanguage(entry.path), {
           targetGroupId
         })
@@ -3113,13 +3120,14 @@ function SourceControlInner(): React.JSX.Element {
             language,
             mode: 'edit'
           },
-          { targetGroupId }
+          { targetGroupId, preview: previewEnabled }
         )
         setEditorViewMode(filePath, 'changes')
         return
       }
       openDiff(activeWorktreeId, filePath, entry.path, language, entry.area === 'staged', {
-        targetGroupId
+        targetGroupId,
+        preview: previewEnabled
       })
     },
     [
@@ -3130,8 +3138,30 @@ function SourceControlInner(): React.JSX.Element {
       openConflictFile,
       openDiff,
       openFile,
+      previewEnabled,
       setEditorViewMode
     ]
+  )
+
+  // Why: Explorer parity — double-click pins (clears preview + sets isPinned).
+  // The diff/editor ids are built inside the openers from internal snapshot
+  // helpers and runtime-env resolution, so re-spelling them here would drift.
+  // Instead, open the row's target (the opener sets it active synchronously)
+  // and pin the now-active file id. Works uniformly for working-tree, markdown,
+  // branch, and conflict rows; pinning an already-permanent tab is a no-op.
+  const handlePinUncommittedEntry = useCallback(
+    (entry: GitStatusEntry) => {
+      // Why: mirrors handleOpenDiff's guard so a no-op open can't pin the stale active file.
+      if (!activeWorktreeId || !worktreePath) {
+        return
+      }
+      handleOpenDiff(entry)
+      const activeId = useAppStore.getState().activeFileIdByWorktree[activeWorktreeId]
+      if (activeId) {
+        pinFile(activeId)
+      }
+    },
+    [activeWorktreeId, worktreePath, handleOpenDiff, pinFile]
   )
 
   const { selectedKeys, handleSelect, handleContextMenu, clearSelection } =
@@ -3714,16 +3744,48 @@ function SourceControlInner(): React.JSX.Element {
         entry,
         branchSummary,
         detectLanguage(entry.path),
-        { targetGroupId: resolveSplitTargetGroupId(event) }
+        { targetGroupId: resolveSplitTargetGroupId(event), preview: previewEnabled }
       )
     },
-    [activeWorktreeId, branchSummary, openBranchDiff, resolveSplitTargetGroupId, worktreePath]
+    [
+      activeWorktreeId,
+      branchSummary,
+      openBranchDiff,
+      previewEnabled,
+      resolveSplitTargetGroupId,
+      worktreePath
+    ]
+  )
+
+  // Why: Explorer parity for branch-compare rows — open then pin the now-active
+  // id (the opener sets it active synchronously) rather than re-spelling the
+  // branch-diff id, which is built from internal compare-snapshot helpers.
+  const handlePinBranchEntry = useCallback(
+    (entry: GitBranchChangeEntry) => {
+      // Why: mirrors openCommittedDiff's guard so a no-op open can't pin the stale active file.
+      if (
+        !activeWorktreeId ||
+        !worktreePath ||
+        !branchSummary ||
+        branchSummary.status !== 'ready'
+      ) {
+        return
+      }
+      openCommittedDiff(entry)
+      const activeId = useAppStore.getState().activeFileIdByWorktree[activeWorktreeId]
+      if (activeId) {
+        pinFile(activeId)
+      }
+    },
+    [activeWorktreeId, worktreePath, branchSummary, openCommittedDiff, pinFile]
   )
 
   const openHistoryCommitDiff = useCallback(
-    async (item: GitHistoryItem): Promise<void> => {
+    // Returns the opened file id (or null) so the double-click pin handler can
+    // promote the now-active commit diff without re-deriving its id.
+    async (item: GitHistoryItem): Promise<string | null> => {
       if (!activeWorktreeId || !worktreePath) {
-        return
+        return null
       }
 
       try {
@@ -3739,7 +3801,7 @@ function SourceControlInner(): React.JSX.Element {
         )
         if (result.summary.status !== 'ready') {
           toast.error(result.summary.errorMessage ?? 'Failed to load commit diff')
-          return
+          return null
         }
         openCommitAllDiffs(
           activeWorktreeId,
@@ -3747,13 +3809,28 @@ function SourceControlInner(): React.JSX.Element {
           result.summary,
           result.entries,
           item.subject,
-          item.message
+          item.message,
+          previewEnabled
         )
+        return useAppStore.getState().activeFileIdByWorktree[activeWorktreeId] ?? null
       } catch (error) {
         toast.error(error instanceof Error ? error.message : 'Failed to load commit diff')
+        return null
       }
     },
-    [activeWorktreeId, openCommitAllDiffs, worktreePath]
+    [activeWorktreeId, openCommitAllDiffs, previewEnabled, worktreePath]
+  )
+
+  // Double-click parity with the file rows: open the commit's combined diff and
+  // pin it. pinFile is a no-op when preview is off (already permanent).
+  const handlePinHistoryCommit = useCallback(
+    async (item: GitHistoryItem): Promise<void> => {
+      const openedId = await openHistoryCommitDiff(item)
+      if (openedId) {
+        pinFile(openedId)
+      }
+    },
+    [openHistoryCommitDiff, pinFile]
   )
 
   // Why: a note's filePath is the same relative path used by GitStatusEntry /
@@ -4661,6 +4738,7 @@ function SourceControlInner(): React.JSX.Element {
                                 onContextMenu={handleContextMenu}
                                 onRevealInExplorer={revealInExplorer}
                                 onOpen={handleOpenDiff}
+                                onPin={handlePinUncommittedEntry}
                                 onStage={handleStage}
                                 onUnstage={handleUnstage}
                                 onDiscard={requestDiscardEntry}
@@ -4683,6 +4761,7 @@ function SourceControlInner(): React.JSX.Element {
                                 onContextMenu={handleContextMenu}
                                 onRevealInExplorer={revealInExplorer}
                                 onOpen={handleOpenDiff}
+                                onPin={handlePinUncommittedEntry}
                                 onStage={handleStage}
                                 onUnstage={handleUnstage}
                                 onDiscard={requestDiscardEntry}
@@ -4753,6 +4832,7 @@ function SourceControlInner(): React.JSX.Element {
                           depth={node.depth}
                           onRevealInExplorer={revealInExplorer}
                           onOpen={(event) => openCommittedDiff(node.entry, event)}
+                          onPin={() => handlePinBranchEntry(node.entry)}
                           commentCount={diffCommentCountByPath.get(node.entry.path) ?? 0}
                           showPathHint={false}
                         />
@@ -4766,6 +4846,7 @@ function SourceControlInner(): React.JSX.Element {
                         worktreePath={worktreePath}
                         onRevealInExplorer={revealInExplorer}
                         onOpen={(event) => openCommittedDiff(entry, event)}
+                        onPin={() => handlePinBranchEntry(entry)}
                         commentCount={diffCommentCountByPath.get(entry.path) ?? 0}
                       />
                     )))}
@@ -4783,6 +4864,7 @@ function SourceControlInner(): React.JSX.Element {
                 onToggle={() => toggleSection('history')}
                 onRefresh={() => void refreshGitHistory()}
                 onOpenCommit={(item) => void openHistoryCommitDiff(item)}
+                onPinCommit={(item) => void handlePinHistoryCommit(item)}
               />
             </div>
           )}
@@ -6599,6 +6681,7 @@ const UncommittedEntryRow = React.memo(function UncommittedEntryRow({
   onContextMenu,
   onRevealInExplorer,
   onOpen,
+  onPin,
   onStage,
   onUnstage,
   onDiscard,
@@ -6615,6 +6698,7 @@ const UncommittedEntryRow = React.memo(function UncommittedEntryRow({
   onContextMenu?: (key: string) => void
   onRevealInExplorer: (worktreeId: string, absolutePath: string) => void
   onOpen: (entry: GitStatusEntry, event?: SourceControlRowOpenEvent) => void
+  onPin: (entry: GitStatusEntry) => void
   onStage: (filePath: string) => Promise<void>
   onUnstage: (filePath: string) => Promise<void>
   onDiscard: (entry: GitStatusEntry) => void
@@ -6687,6 +6771,7 @@ const UncommittedEntryRow = React.memo(function UncommittedEntryRow({
             onOpen(entry, e)
           }
         }}
+        onDoubleClick={() => onPin(entry)}
       >
         <FileIcon className="size-3.5 shrink-0" style={{ color: STATUS_COLORS[entry.status] }} />
         <div className="min-w-0 flex-1 text-xs">
@@ -6725,7 +6810,14 @@ const UncommittedEntryRow = React.memo(function UncommittedEntryRow({
             </span>
           </>
         )}
-        <div className={SOURCE_CONTROL_ROW_ACTION_OVERLAY_CLASS}>
+        <div
+          className={SOURCE_CONTROL_ROW_ACTION_OVERLAY_CLASS}
+          // Why: the row's onDoubleClick pins (opens) the diff; the action
+          // buttons only stop click propagation, so without this a double-click
+          // on Stage/Unstage/Discard would bubble dblclick to the row and pin a
+          // diff as a side effect.
+          onDoubleClick={(event) => event.stopPropagation()}
+        >
           {canDiscard && (
             <ActionButton
               icon={entry.area === 'untracked' ? Trash : Undo2}
@@ -6811,6 +6903,7 @@ function BranchEntryRow({
   depth = 0,
   onRevealInExplorer,
   onOpen,
+  onPin,
   commentCount,
   showPathHint = true
 }: {
@@ -6820,6 +6913,7 @@ function BranchEntryRow({
   depth?: number
   onRevealInExplorer: (worktreeId: string, absolutePath: string) => void
   onOpen: (event: React.MouseEvent<HTMLDivElement>) => void
+  onPin: () => void
   commentCount: number
   showPathHint?: boolean
 }): React.JSX.Element {
@@ -6846,6 +6940,7 @@ function BranchEntryRow({
           e.dataTransfer.effectAllowed = 'copy'
         }}
         onClick={onOpen}
+        onDoubleClick={onPin}
       >
         <FileIcon className="size-3.5 shrink-0" style={{ color: STATUS_COLORS[entry.status] }} />
         <span className="min-w-0 flex-1 truncate text-xs">

@@ -71,10 +71,12 @@ function GitHistoryRefBadge({
 
 function GitHistoryRow({
   viewModel,
-  onOpenCommit
+  onOpenCommit,
+  onPinCommit
 }: {
   viewModel: GitHistoryItemViewModel
   onOpenCommit?: (item: GitHistoryItem) => void
+  onPinCommit?: (item: GitHistoryItem) => void
 }): React.JSX.Element {
   const item = viewModel.historyItem
   const timestamp = formatHistoryTimestamp(item.timestamp)
@@ -176,6 +178,10 @@ function GitHistoryRow({
       onClick={() => {
         onOpenCommit?.(item)
       }}
+      // Double-click pins the commit's combined diff, mirroring the file rows.
+      onDoubleClick={() => {
+        onPinCommit?.(item)
+      }}
     >
       {rowContent}
     </button>
@@ -187,13 +193,15 @@ export function GitHistoryPanel({
   collapsed,
   onToggle,
   onRefresh,
-  onOpenCommit
+  onOpenCommit,
+  onPinCommit
 }: {
   state: GitHistoryPanelState
   collapsed: boolean
   onToggle: () => void
   onRefresh: () => void
   onOpenCommit?: (item: GitHistoryItem) => void
+  onPinCommit?: (item: GitHistoryItem) => void
 }): React.JSX.Element | null {
   const result = state.result
   const viewModels = useMemo(() => {
@@ -401,6 +409,7 @@ export function GitHistoryPanel({
               key={`${viewModel.kind}:${viewModel.historyItem.id}`}
               viewModel={viewModel}
               onOpenCommit={onOpenCommit}
+              onPinCommit={onPinCommit}
             />
           ))}
         </div>

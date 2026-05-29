@@ -448,11 +448,21 @@ export const createTabsSlice: StateCreator<AppState, [], [], TabsSlice> = (set, 
 
       let nextTabs = existingTabs
       let nextOrder = dedupeTabOrder(group.tabOrder)
+      // -1 = append; >=0 = drop the replacement into the evicted preview's slot
+      // so a mid-bar preview doesn't jump to the end when the next one opens.
+      let previewSlotOrderIndex = -1
+      let previewSlotTabIndex = -1
       if (init?.isPreview) {
+        // Why: a group has ONE shared preview slot across editor AND diff tabs,
+        // so evict the group's existing preview regardless of content type to
+        // match replaceGroupPreviewFile. isPreview is only set on editor/diff
+        // tabs, so this can only ever target the intended shared slot.
         const existingPreview = existingTabs.find(
-          (tab) => tab.groupId === group.id && tab.isPreview && tab.contentType === contentType
+          (tab) => tab.groupId === group.id && tab.isPreview
         )
         if (existingPreview) {
+          previewSlotOrderIndex = nextOrder.indexOf(existingPreview.id)
+          previewSlotTabIndex = existingTabs.findIndex((tab) => tab.id === existingPreview.id)
           nextTabs = existingTabs.filter((tab) => tab.id !== existingPreview.id)
           nextOrder = nextOrder.filter((tabId) => tabId !== existingPreview.id)
         }
@@ -475,7 +485,22 @@ export const createTabsSlice: StateCreator<AppState, [], [], TabsSlice> = (set, 
         isPinned: init?.isPinned
       }
 
-      nextOrder = dedupeTabOrder([...nextOrder, created.id])
+      nextOrder =
+        previewSlotOrderIndex >= 0
+          ? dedupeTabOrder([
+              ...nextOrder.slice(0, previewSlotOrderIndex),
+              created.id,
+              ...nextOrder.slice(previewSlotOrderIndex)
+            ])
+          : dedupeTabOrder([...nextOrder, created.id])
+      const nextTabsWithCreated =
+        previewSlotTabIndex >= 0
+          ? [
+              ...nextTabs.slice(0, previewSlotTabIndex),
+              created,
+              ...nextTabs.slice(previewSlotTabIndex)
+            ]
+          : [...nextTabs, created]
       const shouldActivate = init?.activate ?? true
       const nextActiveTabId = shouldActivate ? created.id : (group.activeTabId ?? created.id)
       const sanitizedRecent = sanitizeRecentTabIds(group.recentTabIds, nextOrder)
@@ -487,7 +512,7 @@ export const createTabsSlice: StateCreator<AppState, [], [], TabsSlice> = (set, 
       return {
         unifiedTabsByWorktree: {
           ...state.unifiedTabsByWorktree,
-          [worktreeId]: [...nextTabs, created]
+          [worktreeId]: nextTabsWithCreated
         },
         groupsByWorktree: {
           ...groupsByWorktree,

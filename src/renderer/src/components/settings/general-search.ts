@@ -68,6 +68,12 @@ export const GENERAL_EDITOR_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     keywords: ['minimap', 'overview', 'code', 'scroll']
   },
   {
+    title: 'Preview Tabs',
+    description:
+      'Open files in a temporary preview tab when single-clicking in the Explorer or Source Control.',
+    keywords: ['preview', 'tabs', 'single click', 'explorer', 'source control', 'temporary']
+  },
+  {
     title: 'Markdown Review Notes',
     description: 'Show local markdown review note controls in rich editor mode.',
     keywords: ['markdown', 'review', 'notes', 'annotations', 'agents']

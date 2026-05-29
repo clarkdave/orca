@@ -7,14 +7,21 @@ import type { TreeNode } from './file-explorer-types'
 
 type UseFileExplorerHandlersParams = {
   activeWorktreeId: string | null
-  openFile: (params: {
-    filePath: string
-    relativePath: string
-    worktreeId: string
-    language: string
-    mode: 'edit'
-  }) => void
-  pinFile: (filePath: string) => void
+  openFile: (
+    params: {
+      filePath: string
+      relativePath: string
+      worktreeId: string
+      language: string
+      mode: 'edit'
+    },
+    options?: { preview?: boolean }
+  ) => void
+  pinFile: (fileId: string) => void
+  // Why: read at double-click time (not via a snapshot prop) so it reflects the
+  // active file the single-click just opened, including owner-qualified ids.
+  getActiveFileForWorktree: (worktreeId: string) => { id: string; filePath: string } | null
+  previewEnabled: boolean
   toggleDir: (worktreeId: string, dirPath: string) => void
   loadDir: (
     dirPath: string,
@@ -38,7 +45,8 @@ type OpenFileParams = Parameters<UseFileExplorerHandlersParams['openFile']>[0]
 export async function activateFileExplorerNode(args: {
   node: TreeNode
   activeWorktreeId: string | null
-  openFile: (params: OpenFileParams) => void
+  openFile: (params: OpenFileParams, options?: { preview?: boolean }) => void
+  previewEnabled: boolean
   toggleDir: (worktreeId: string, dirPath: string) => void
   loadDir: UseFileExplorerHandlersParams['loadDir']
   statPath: UseFileExplorerHandlersParams['statPath']
@@ -49,6 +57,7 @@ export async function activateFileExplorerNode(args: {
     node,
     activeWorktreeId,
     openFile,
+    previewEnabled,
     toggleDir,
     loadDir,
     statPath,
@@ -87,19 +96,52 @@ export async function activateFileExplorerNode(args: {
       return
     }
   }
-  openFile({
-    filePath: node.path,
-    relativePath: node.relativePath,
-    worktreeId: activeWorktreeId,
-    language: detectLanguage(node.name),
-    mode: 'edit'
-  })
+  // Why: single-click opens as preview when the setting is on so the tab stays
+  // temporary until the user double-clicks or edits (VSCode-style behaviour).
+  openFile(
+    {
+      filePath: node.path,
+      relativePath: node.relativePath,
+      worktreeId: activeWorktreeId,
+      language: detectLanguage(node.name),
+      mode: 'edit'
+    },
+    { preview: previewEnabled }
+  )
+}
+
+// Why: extracted as a pure function so it can be unit-tested without rendering
+// the hook (the test environment is node, not jsdom).
+//
+// The single-click already opened node.path under the active runtime owner and
+// made it the active file. Pin the active file id (mirroring Source Control's
+// open-then-pin-active) instead of node.path: a same-path file open under a
+// different SSH/runtime owner gets an OWNER-QUALIFIED id (≠ node.path), so
+// pinFile(node.path) would find nothing. Guard on filePath === node.path so a
+// stray double-click can't promote an unrelated active file.
+export function pinFileExplorerNode(args: {
+  node: TreeNode
+  activeWorktreeId: string | null
+  pinFile: (fileId: string) => void
+  getActiveFileForWorktree: (worktreeId: string) => { id: string; filePath: string } | null
+}): void {
+  const { node, activeWorktreeId, pinFile, getActiveFileForWorktree } = args
+  if (!activeWorktreeId || node.isDirectory) {
+    return
+  }
+  const activeFile = getActiveFileForWorktree(activeWorktreeId)
+  if (!activeFile || activeFile.filePath !== node.path) {
+    return
+  }
+  pinFile(activeFile.id)
 }
 
 export function useFileExplorerHandlers({
   activeWorktreeId,
   openFile,
   pinFile,
+  getActiveFileForWorktree,
+  previewEnabled,
   toggleDir,
   loadDir,
   statPath,
@@ -113,6 +155,7 @@ export function useFileExplorerHandlers({
         node,
         activeWorktreeId,
         openFile,
+        previewEnabled,
         toggleDir,
         loadDir,
         statPath,
@@ -120,17 +163,23 @@ export function useFileExplorerHandlers({
         setSelectedPath
       })
     },
-    [activeWorktreeId, loadDir, markPathAsDirectory, openFile, statPath, toggleDir, setSelectedPath]
+    [
+      activeWorktreeId,
+      loadDir,
+      markPathAsDirectory,
+      openFile,
+      previewEnabled,
+      statPath,
+      toggleDir,
+      setSelectedPath
+    ]
   )
 
   const handleDoubleClick = useCallback(
     (node: TreeNode) => {
-      if (!activeWorktreeId || node.isDirectory) {
-        return
-      }
-      pinFile(node.path)
+      pinFileExplorerNode({ node, activeWorktreeId, pinFile, getActiveFileForWorktree })
     },
-    [activeWorktreeId, pinFile]
+    [activeWorktreeId, pinFile, getActiveFileForWorktree]
   )
 
   const handleWheelCapture = useCallback(

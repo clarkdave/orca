@@ -887,6 +887,21 @@ export function GeneralPane({
         </SearchableSetting>
 
         <SearchableSetting
+          title="Preview Tabs"
+          description="Open files in preview tabs when single-clicking in the Explorer or Source Control."
+          keywords={['preview', 'tabs', 'single click', 'explorer', 'source control', 'temporary']}
+        >
+          <SettingsSwitchRow
+            label="Preview Tabs"
+            description="Single-clicking a file in the Explorer or Source Control opens it in a temporary preview tab that is replaced when you open another file."
+            checked={settings.editorPreviewTabsEnabled}
+            onChange={() =>
+              updateSettings({ editorPreviewTabsEnabled: !settings.editorPreviewTabsEnabled })
+            }
+          />
+        </SearchableSetting>
+
+        <SearchableSetting
           title="Markdown Review Notes"
           description="Show local markdown review note controls in rich editor mode."
           keywords={['markdown', 'review', 'notes', 'annotations', 'agents']}

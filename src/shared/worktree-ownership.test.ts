@@ -83,6 +83,7 @@ function makeSettings(overrides: Partial<GlobalSettings> = {}): GlobalSettings {
     editorAutoSave: false,
     editorAutoSaveDelayMs: 1000,
     editorMinimapEnabled: false,
+    editorPreviewTabsEnabled: false,
     markdownReviewToolsEnabled: true,
     terminalFontSize: 14,
     terminalFontFamily: 'monospace',

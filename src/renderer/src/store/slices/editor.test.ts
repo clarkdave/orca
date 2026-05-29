@@ -11,6 +11,7 @@ import {
 } from '../../runtime/runtime-compatibility-test-fixture'
 import { clearRuntimeCompatibilityCacheForTests } from '../../runtime/runtime-rpc-client'
 import { FLOATING_TERMINAL_WORKTREE_ID } from '../../../../shared/constants'
+import type { GitBranchChangeEntry, GitCommitCompareSummary } from '../../../../shared/types'
 
 const { toastErrorMock } = vi.hoisted(() => ({
   toastErrorMock: vi.fn()
@@ -341,6 +342,309 @@ describe('createEditorSlice openDiff', () => {
     expect(diffTab?.groupId).toBe(targetGroupId)
     expect(diffTab?.entityId).toBe('wt-1::diff::unstaged::file.ts')
     expect(store.getState().activeGroupIdByWorktree['wt-1']).toBe(targetGroupId)
+  })
+
+  it('marks a diff opened as preview isPreview on the OpenFile', () => {
+    const store = createEditorStore()
+
+    store
+      .getState()
+      .openDiff('wt-1', '/repo/file.ts', 'file.ts', 'typescript', false, { preview: true })
+
+    expect(store.getState().openFiles).toEqual([
+      expect.objectContaining({
+        id: 'wt-1::diff::unstaged::file.ts',
+        mode: 'diff',
+        isPreview: true
+      })
+    ])
+  })
+
+  it('propagates isPreview to the unified diff Tab', () => {
+    const store = createEditorTabsStore()
+
+    store
+      .getState()
+      .openDiff('wt-1', '/repo/file.ts', 'file.ts', 'typescript', false, { preview: true })
+
+    const tab = store.getState().unifiedTabsByWorktree['wt-1']?.[0]
+    expect(tab).toMatchObject({
+      contentType: 'diff',
+      entityId: 'wt-1::diff::unstaged::file.ts',
+      isPreview: true
+    })
+  })
+
+  it('evicts a prior diff preview when a second diff opens as preview in the same group', () => {
+    const store = createEditorTabsStore()
+
+    store.getState().openDiff('wt-1', '/repo/a.ts', 'a.ts', 'typescript', false, { preview: true })
+    store.getState().openDiff('wt-1', '/repo/b.ts', 'b.ts', 'typescript', false, { preview: true })
+
+    // The shared preview slot is replaced in place, so only the second diff remains.
+    expect(store.getState().openFiles).toEqual([
+      expect.objectContaining({ id: 'wt-1::diff::unstaged::b.ts', isPreview: true })
+    ])
+    const diffTabs = (store.getState().unifiedTabsByWorktree['wt-1'] ?? []).filter(
+      (tab) => tab.contentType === 'diff'
+    )
+    expect(diffTabs).toEqual([
+      expect.objectContaining({ entityId: 'wt-1::diff::unstaged::b.ts', isPreview: true })
+    ])
+  })
+
+  it('evicts a diff preview when an editor preview opens in the same group', () => {
+    const store = createEditorTabsStore()
+
+    store.getState().openDiff('wt-1', '/repo/a.ts', 'a.ts', 'typescript', false, { preview: true })
+    store.getState().openFile(
+      {
+        filePath: '/repo/b.md',
+        relativePath: 'b.md',
+        worktreeId: 'wt-1',
+        language: 'markdown',
+        mode: 'edit'
+      },
+      { preview: true }
+    )
+
+    // The diff preview and editor preview share one slot, so the editor replaces it.
+    expect(store.getState().openFiles).toEqual([
+      expect.objectContaining({ id: '/repo/b.md', mode: 'edit', isPreview: true })
+    ])
+    // The old diff unified Tab must NOT linger: one shared slot across types.
+    const openFileIds = new Set(store.getState().openFiles.map((f) => f.id))
+    const tabs = store.getState().unifiedTabsByWorktree['wt-1'] ?? []
+    expect(tabs).toEqual([
+      expect.objectContaining({ contentType: 'editor', entityId: '/repo/b.md', isPreview: true })
+    ])
+    expect(tabs.every((tab) => openFileIds.has(tab.entityId))).toBe(true)
+  })
+
+  it('evicts an editor preview when a diff preview opens in the same group', () => {
+    const store = createEditorTabsStore()
+
+    store.getState().openFile(
+      {
+        filePath: '/repo/a.md',
+        relativePath: 'a.md',
+        worktreeId: 'wt-1',
+        language: 'markdown',
+        mode: 'edit'
+      },
+      { preview: true }
+    )
+    store.getState().openDiff('wt-1', '/repo/b.ts', 'b.ts', 'typescript', false, { preview: true })
+
+    // Symmetric to the editor-replaces-diff case: one shared slot, so the diff wins.
+    expect(store.getState().openFiles).toEqual([
+      expect.objectContaining({ id: 'wt-1::diff::unstaged::b.ts', mode: 'diff', isPreview: true })
+    ])
+    const openFileIds = new Set(store.getState().openFiles.map((f) => f.id))
+    const tabs = store.getState().unifiedTabsByWorktree['wt-1'] ?? []
+    expect(tabs).toEqual([
+      expect.objectContaining({
+        contentType: 'diff',
+        entityId: 'wt-1::diff::unstaged::b.ts',
+        isPreview: true
+      })
+    ])
+    expect(tabs.every((tab) => openFileIds.has(tab.entityId))).toBe(true)
+  })
+
+  it('pins an already-open diff preview when reopened as non-preview', () => {
+    const store = createEditorStore()
+
+    store
+      .getState()
+      .openDiff('wt-1', '/repo/file.ts', 'file.ts', 'typescript', false, { preview: true })
+    expect(store.getState().openFiles[0]).toMatchObject({ isPreview: true })
+
+    store
+      .getState()
+      .openDiff('wt-1', '/repo/file.ts', 'file.ts', 'typescript', false, { preview: false })
+
+    expect(store.getState().openFiles[0].isPreview).toBe(false)
+  })
+
+  it('promotes a diff preview to permanent when its dirty bit is set', () => {
+    const store = createEditorStore()
+
+    store
+      .getState()
+      .openDiff('wt-1', '/repo/file.ts', 'file.ts', 'typescript', false, { preview: true })
+    store.getState().markFileDirty('wt-1::diff::unstaged::file.ts', true)
+
+    expect(store.getState().openFiles[0].isPreview).toBeUndefined()
+  })
+})
+
+describe('createEditorSlice openCommitAllDiffs preview', () => {
+  const commitSummary: GitCommitCompareSummary = {
+    commitOid: 'c1',
+    parentOid: 'p0',
+    compareRef: 'abc1234',
+    baseRef: 'p0',
+    changedFiles: 1,
+    status: 'ready'
+  }
+  const commitEntries: GitBranchChangeEntry[] = [{ path: 'src/x.ts', status: 'modified' }]
+  const commitId = 'wt-1::all-diffs::commit::c1'
+
+  it('opens a combined commit diff as preview when preview is on', () => {
+    const store = createEditorTabsStore()
+
+    store
+      .getState()
+      .openCommitAllDiffs('wt-1', '/repo', commitSummary, commitEntries, 'subject', 'message', true)
+
+    expect(store.getState().openFiles).toEqual([
+      expect.objectContaining({ id: commitId, diffSource: 'combined-commit', isPreview: true })
+    ])
+    expect(store.getState().unifiedTabsByWorktree['wt-1']?.[0]).toMatchObject({
+      contentType: 'diff',
+      entityId: commitId,
+      isPreview: true
+    })
+  })
+
+  it('opens a combined commit diff as permanent when preview is off', () => {
+    const store = createEditorTabsStore()
+
+    store
+      .getState()
+      .openCommitAllDiffs(
+        'wt-1',
+        '/repo',
+        commitSummary,
+        commitEntries,
+        'subject',
+        'message',
+        false
+      )
+
+    expect(store.getState().openFiles[0]).toMatchObject({ id: commitId })
+    expect(store.getState().openFiles[0].isPreview).toBeUndefined()
+  })
+
+  it('shares the one preview slot with diff previews (cross-type eviction)', () => {
+    const store = createEditorTabsStore()
+
+    store.getState().openDiff('wt-1', '/repo/a.ts', 'a.ts', 'typescript', false, { preview: true })
+    store
+      .getState()
+      .openCommitAllDiffs('wt-1', '/repo', commitSummary, commitEntries, 'subject', 'message', true)
+
+    // The commit diff replaces the working-tree diff preview in the shared slot.
+    expect(store.getState().openFiles).toEqual([
+      expect.objectContaining({ id: commitId, isPreview: true })
+    ])
+    expect(store.getState().unifiedTabsByWorktree['wt-1']).toEqual([
+      expect.objectContaining({ entityId: commitId, isPreview: true })
+    ])
+  })
+
+  it('pins an already-open combined commit diff when reopened as non-preview', () => {
+    const store = createEditorStore()
+
+    store
+      .getState()
+      .openCommitAllDiffs('wt-1', '/repo', commitSummary, commitEntries, 'subject', 'message', true)
+    expect(store.getState().openFiles[0]).toMatchObject({ isPreview: true })
+
+    store
+      .getState()
+      .openCommitAllDiffs(
+        'wt-1',
+        '/repo',
+        commitSummary,
+        commitEntries,
+        'subject',
+        'message',
+        false
+      )
+
+    expect(store.getState().openFiles[0].isPreview).toBe(false)
+  })
+})
+
+describe('createEditorSlice preview slot ordering', () => {
+  // Locks finding-2: replacing the group's preview must reuse the evicted
+  // preview's tab-bar slot, not append the replacement to the end.
+  it('replaces a mid-bar preview in place instead of moving it to the end', () => {
+    const store = createEditorTabsStore()
+
+    // X permanent, Y preview, Z permanent → Y now sits between X and Z.
+    store.getState().openDiff('wt-1', '/repo/x.ts', 'x.ts', 'typescript', false, { preview: false })
+    store.getState().openDiff('wt-1', '/repo/y.ts', 'y.ts', 'typescript', false, { preview: true })
+    store.getState().openDiff('wt-1', '/repo/z.ts', 'z.ts', 'typescript', false, { preview: false })
+
+    // W preview replaces Y; it must land in Y's slot (index 1), not the end.
+    store.getState().openDiff('wt-1', '/repo/w.ts', 'w.ts', 'typescript', false, { preview: true })
+
+    const group = store.getState().groupsByWorktree['wt-1']?.[0]
+    const tabsById = new Map(
+      (store.getState().unifiedTabsByWorktree['wt-1'] ?? []).map((t) => [t.id, t])
+    )
+    const orderedEntityIds = (group?.tabOrder ?? []).map((id) => tabsById.get(id)?.entityId)
+    expect(orderedEntityIds).toEqual([
+      'wt-1::diff::unstaged::x.ts',
+      'wt-1::diff::unstaged::w.ts',
+      'wt-1::diff::unstaged::z.ts'
+    ])
+  })
+})
+
+describe('createEditorSlice markFileDirty preview promotion', () => {
+  // Locks the bug fix: editing a preview must clear BOTH OpenFile.isPreview and
+  // the unified Tab.isPreview, else the next preview open in the group evicts the
+  // (now-promoted) tab via createUnifiedTab, orphaning its OpenFile.
+  it('clears the unified Tab.isPreview without pinning, surviving the next preview open', () => {
+    const store = createEditorTabsStore()
+
+    store.getState().openFile(
+      {
+        filePath: '/repo/a.md',
+        relativePath: 'a.md',
+        worktreeId: 'wt-1',
+        language: 'markdown',
+        mode: 'edit'
+      },
+      { preview: true }
+    )
+
+    const tabAId = store.getState().unifiedTabsByWorktree['wt-1']?.[0]?.id
+    expect(store.getState().openFiles.find((f) => f.id === '/repo/a.md')?.isPreview).toBe(true)
+    expect(store.getState().unifiedTabsByWorktree['wt-1']?.[0]).toMatchObject({
+      entityId: '/repo/a.md',
+      isPreview: true
+    })
+
+    // Editing A promotes it: OpenFile.isPreview cleared, Tab.isPreview false, NOT pinned.
+    store.getState().markFileDirty('/repo/a.md', true)
+
+    const promotedTab = store.getState().unifiedTabsByWorktree['wt-1']?.find((t) => t.id === tabAId)
+    expect(store.getState().openFiles.find((f) => f.id === '/repo/a.md')?.isPreview).toBeUndefined()
+    expect(promotedTab?.isPreview).toBe(false)
+    expect(promotedTab?.isPinned).not.toBe(true)
+
+    // Opening B as a preview in the same group must not evict promoted A.
+    store.getState().openFile(
+      {
+        filePath: '/repo/b.md',
+        relativePath: 'b.md',
+        worktreeId: 'wt-1',
+        language: 'markdown',
+        mode: 'edit'
+      },
+      { preview: true }
+    )
+
+    const tabs = store.getState().unifiedTabsByWorktree['wt-1'] ?? []
+    expect(tabs.find((t) => t.id === tabAId)).toBeTruthy()
+    expect(tabs.find((t) => t.entityId === '/repo/b.md')).toMatchObject({ isPreview: true })
+    // A's OpenFile is still open (not orphaned by an eviction-induced close).
+    expect(store.getState().openFiles.find((f) => f.id === '/repo/a.md')).toBeTruthy()
   })
 })
 
@@ -847,6 +1151,171 @@ describe('createEditorSlice markdown view state', () => {
         id: '/repo/docs/guide.md',
         isPreview: true
       })
+    ])
+  })
+
+  it('evicts the target group diff preview, not another group editor preview', () => {
+    const store = createEditorStore()
+
+    const diffPreviewId = 'wt-1::diff::unstaged::file.ts'
+    const otherEditorPreviewId = '/repo/other.ts'
+    // group-1 holds a DIFF preview; group-2 holds an unrelated editor preview.
+    // Opening into group-1 must evict the diff (shared cross-type slot) while
+    // leaving group-2's editor preview alone. Order puts the other-group editor
+    // first so the worktree-wide fallback can't accidentally produce the same
+    // result — the eviction is driven by group-scoped matching.
+    store.setState({
+      openFiles: [
+        {
+          id: otherEditorPreviewId,
+          filePath: otherEditorPreviewId,
+          relativePath: 'other.ts',
+          worktreeId: 'wt-1',
+          language: 'typescript',
+          isDirty: false,
+          mode: 'edit',
+          isPreview: true
+        },
+        {
+          id: diffPreviewId,
+          filePath: '/repo/file.ts',
+          relativePath: 'file.ts',
+          worktreeId: 'wt-1',
+          language: 'typescript',
+          isDirty: false,
+          mode: 'diff',
+          diffSource: 'unstaged',
+          isPreview: true
+        }
+      ],
+      unifiedTabsByWorktree: {
+        'wt-1': [
+          {
+            id: 'tab-other-editor',
+            entityId: otherEditorPreviewId,
+            groupId: 'group-2',
+            worktreeId: 'wt-1',
+            contentType: 'editor',
+            label: 'other.ts',
+            customLabel: null,
+            color: null,
+            sortOrder: 0,
+            createdAt: 0,
+            isPreview: true
+          },
+          {
+            id: 'tab-diff',
+            entityId: diffPreviewId,
+            groupId: 'group-1',
+            worktreeId: 'wt-1',
+            contentType: 'diff',
+            label: 'file.ts',
+            customLabel: null,
+            color: null,
+            sortOrder: 1,
+            createdAt: 0,
+            isPreview: true
+          }
+        ]
+      }
+    })
+
+    store.getState().openFile(
+      {
+        filePath: '/repo/docs/README.md',
+        relativePath: 'docs/README.md',
+        worktreeId: 'wt-1',
+        language: 'markdown',
+        mode: 'edit'
+      },
+      { preview: true, targetGroupId: 'group-1' }
+    )
+
+    expect(store.getState().openFiles).toEqual([
+      expect.objectContaining({ id: otherEditorPreviewId, isPreview: true }),
+      // The diff preview slot in group-1 was replaced in place by the editor preview.
+      expect.objectContaining({ id: '/repo/docs/README.md', mode: 'edit', isPreview: true })
+    ])
+  })
+
+  it('does not evict another group preview when the target group has tabs but no preview', () => {
+    const store = createEditorTabsStore()
+
+    // group-A holds a preview; group-B (the resolved target) has a non-preview
+    // tab but no preview of its own. Opening the first preview into group-B must
+    // append it without reaching into group-A — group scoping is available, so
+    // an empty group-preview set evicts nothing.
+    const groupAPreviewId = '/repo/a.ts'
+    const groupBExistingId = '/repo/b.ts'
+    store.setState({
+      openFiles: [
+        {
+          id: groupAPreviewId,
+          filePath: groupAPreviewId,
+          relativePath: 'a.ts',
+          worktreeId: 'wt-1',
+          language: 'typescript',
+          isDirty: false,
+          mode: 'edit',
+          isPreview: true
+        },
+        {
+          id: groupBExistingId,
+          filePath: groupBExistingId,
+          relativePath: 'b.ts',
+          worktreeId: 'wt-1',
+          language: 'typescript',
+          isDirty: false,
+          mode: 'edit'
+        }
+      ],
+      unifiedTabsByWorktree: {
+        'wt-1': [
+          {
+            id: 'tab-a',
+            entityId: groupAPreviewId,
+            groupId: 'group-A',
+            worktreeId: 'wt-1',
+            contentType: 'editor',
+            label: 'a.ts',
+            customLabel: null,
+            color: null,
+            sortOrder: 0,
+            createdAt: 0,
+            isPreview: true
+          },
+          {
+            id: 'tab-b',
+            entityId: groupBExistingId,
+            groupId: 'group-B',
+            worktreeId: 'wt-1',
+            contentType: 'editor',
+            label: 'b.ts',
+            customLabel: null,
+            color: null,
+            sortOrder: 1,
+            createdAt: 0
+          }
+        ]
+      }
+    })
+
+    store.getState().openFile(
+      {
+        filePath: '/repo/c.ts',
+        relativePath: 'c.ts',
+        worktreeId: 'wt-1',
+        language: 'typescript',
+        mode: 'edit'
+      },
+      { preview: true, targetGroupId: 'group-B' }
+    )
+
+    // group-A's preview survives; the new preview is appended, not swapped in.
+    expect(store.getState().openFiles).toEqual([
+      expect.objectContaining({ id: groupAPreviewId, isPreview: true }),
+      expect.objectContaining({ id: groupBExistingId }),
+      expect.objectContaining({ id: '/repo/c.ts', mode: 'edit', isPreview: true })
     ])
   })
 })

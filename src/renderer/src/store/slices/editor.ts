@@ -203,6 +203,9 @@ const MAX_RECENT_CLOSED_EDITOR_TABS = 10
 
 type EditorOpenTargetOptions = {
   targetGroupId?: string
+  // Why: opt-in preview opens (Explorer/Source Control single-click) ride the
+  // same options object as split-group routing so both can be requested together.
+  preview?: boolean
 }
 
 export type PendingEditorReveal = {
@@ -423,7 +426,8 @@ export type EditorSlice = {
     compare: GitCommitCompareSummary,
     entries: GitBranchChangeEntry[],
     subject?: string,
-    message?: string
+    message?: string,
+    preview?: boolean
   ) => void
 
   // Cursor line tracking per file
@@ -673,6 +677,153 @@ function buildEditorActiveResult(
       : { activeFileId: fileId, activeTabType: 'editor' as const }),
     activeFileIdByWorktree: { ...state.activeFileIdByWorktree, [worktreeId]: fileId },
     activeTabTypeByWorktree: { ...state.activeTabTypeByWorktree, [worktreeId]: 'editor' }
+  }
+}
+
+/** Partial state returned when a group's preview slot is replaced in place. */
+type GroupPreviewReplacement = Pick<
+  EditorSlice,
+  | 'openFiles'
+  | 'editorDrafts'
+  | 'editorCursorLine'
+  | 'markdownViewMode'
+  | 'editorViewMode'
+  | 'recentlyClosedEditorTabsByWorktree'
+> & {
+  tabBarOrderByWorktree?: Record<string, string[]>
+}
+
+type GroupPreviewState = Pick<
+  EditorSlice,
+  | 'openFiles'
+  | 'editorDrafts'
+  | 'editorCursorLine'
+  | 'markdownViewMode'
+  | 'editorViewMode'
+  | 'recentlyClosedEditorTabsByWorktree'
+> & {
+  // Optional + `?.`-guarded below: tests (and some partial store states)
+  // construct slices without these maps; the helper must not throw on access.
+  unifiedTabsByWorktree?: Record<string, Tab[]>
+  tabBarOrderByWorktree?: Record<string, string[]>
+}
+
+/**
+ * Evict the single preview tab in the target group and put `replacement` in its
+ * place, preserving tab position and tab-bar order. Returns the partial state
+ * update, or `null` when the group has no preview to replace (caller then
+ * appends `replacement` normally).
+ *
+ * Why: a tab group has one shared preview slot across ALL content types (editor
+ * and diff), so opening any file as a preview retires the previous preview —
+ * editor or diff. The slot is scoped to `worktreeId + targetGroupId` so a
+ * preview opened in group B never evicts group A's preview (split tab groups).
+ * Only falls back to worktree-wide matching when group scoping is genuinely
+ * unavailable (no targetGroupId, or no unified tabs for the worktree — e.g.
+ * tests that don't populate unifiedTabsByWorktree). When scoping IS available,
+ * an empty group-preview set evicts nothing rather than reaching into another
+ * group, so opening the first preview in group B never retires group A's.
+ */
+function replaceGroupPreviewFile(
+  state: GroupPreviewState,
+  worktreeId: string,
+  targetGroupId: string | undefined,
+  replacement: OpenFile,
+  recordReplacedPreview: boolean
+): GroupPreviewReplacement | null {
+  const id = replacement.id
+  const tabsForWorktree = state.unifiedTabsByWorktree?.[worktreeId] ?? []
+  // Group scoping is available only when we know the target group AND have its
+  // tabs to match against. When available we match strictly within the group
+  // (an empty set evicts nothing); only when it's unavailable do we fall back
+  // to worktree-wide matching, so we never reach into another split group.
+  const groupScopingAvailable = Boolean(targetGroupId) && tabsForWorktree.length > 0
+  // Group-scoped preview entity ids (the unified tab's entityId is the OpenFile
+  // id). Considers previews of any content type so the slot is shared.
+  const groupPreviewEntityIds = new Set<string>()
+  if (groupScopingAvailable) {
+    for (const tab of tabsForWorktree) {
+      if (tab.groupId === targetGroupId && tab.isPreview) {
+        groupPreviewEntityIds.add(tab.entityId)
+      }
+    }
+  }
+
+  const existingPreviewIdx = state.openFiles.findIndex((f) => {
+    if (f.worktreeId !== worktreeId || !f.isPreview) {
+      return false
+    }
+    if (!groupScopingAvailable) {
+      return true
+    }
+    return groupPreviewEntityIds.has(f.id)
+  })
+  if (existingPreviewIdx === -1) {
+    return null
+  }
+
+  const replacedPreview = state.openFiles[existingPreviewIdx]
+  const nextEditorDrafts =
+    replacedPreview.id === id
+      ? state.editorDrafts
+      : Object.fromEntries(
+          Object.entries(state.editorDrafts).filter(([fileId]) => fileId !== replacedPreview.id)
+        )
+  const nextMarkdownViewMode =
+    replacedPreview.id === id
+      ? state.markdownViewMode
+      : Object.fromEntries(
+          Object.entries(state.markdownViewMode).filter(([fileId]) => fileId !== replacedPreview.id)
+        )
+  const nextEditorViewMode =
+    replacedPreview.id === id
+      ? state.editorViewMode
+      : Object.fromEntries(
+          Object.entries(state.editorViewMode).filter(([fileId]) => fileId !== replacedPreview.id)
+        )
+  // Why: editorCursorLine entries accumulate per file; clean up the evicted
+  // preview's entry so it does not leak across tab replacements.
+  const nextEditorCursorLine =
+    replacedPreview.id === id
+      ? state.editorCursorLine
+      : Object.fromEntries(
+          Object.entries(state.editorCursorLine).filter(([fileId]) => fileId !== replacedPreview.id)
+        )
+  // Replace in-place to preserve tab position
+  const newFiles = state.openFiles.map((f, i) => (i === existingPreviewIdx ? replacement : f))
+  // Swap the old preview ID for the new one in the stored tab bar order
+  const prevOrder = state.tabBarOrderByWorktree?.[worktreeId]
+  const tabBarOrderByWorktree = prevOrder
+    ? {
+        ...state.tabBarOrderByWorktree,
+        [worktreeId]: prevOrder.map((eid) => (eid === replacedPreview.id ? id : eid))
+      }
+    : undefined
+  // Why: the evicted preview (editor or diff) is pushed onto the
+  // recently-closed stack so it can be restored via Cmd/Ctrl+Shift+T.
+  // Gated with recordReplacedPreview so file-explorer single-click (which
+  // semantically *wants* silent eviction) is unaffected.
+  let nextRecentlyClosed = state.recentlyClosedEditorTabsByWorktree
+  if (recordReplacedPreview && replacedPreview.id !== id) {
+    const { id: _rid, isDirty: _rdirty, ...snap } = replacedPreview
+    const stack = state.recentlyClosedEditorTabsByWorktree[worktreeId] ?? []
+    nextRecentlyClosed = {
+      ...state.recentlyClosedEditorTabsByWorktree,
+      [worktreeId]: [snap as ClosedEditorTabSnapshot, ...stack].slice(
+        0,
+        MAX_RECENT_CLOSED_EDITOR_TABS
+      )
+    }
+  }
+
+  return {
+    openFiles: newFiles,
+    editorDrafts: nextEditorDrafts,
+    editorCursorLine: nextEditorCursorLine,
+    markdownViewMode: nextMarkdownViewMode,
+    editorViewMode: nextEditorViewMode,
+    recentlyClosedEditorTabsByWorktree: nextRecentlyClosed,
+    ...(tabBarOrderByWorktree ? { tabBarOrderByWorktree } : {})
   }
 }
 
@@ -1384,100 +1535,24 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
         }
       }
 
-      // If opening as preview, replace the existing preview tab.
-      // Why: preview replacement is scoped to `worktreeId + targetGroupId` so
-      // link clicks in group B do not silently evict previews from group A.
-      // Falls back to worktree-wide when group plumbing is unavailable (e.g.
-      // in tests that don't populate unifiedTabsByWorktree), matching the
-      // prior behavior.
-      let newFiles = s.openFiles
+      // If opening as preview, replace the group's existing preview tab in place.
       if (isPreview) {
-        const existingPreviewIdx = s.openFiles.findIndex((f) => {
-          if (f.worktreeId !== worktreeId || !f.isPreview) {
-            return false
-          }
-          if (previewTabByEntity.size === 0) {
-            return true
-          }
-          return previewTabByEntity.has(f.id)
-        })
-        if (existingPreviewIdx !== -1) {
-          const replacedPreview = s.openFiles[existingPreviewIdx]
-          const nextEditorDrafts =
-            replacedPreview.id === id
-              ? s.editorDrafts
-              : Object.fromEntries(
-                  Object.entries(s.editorDrafts).filter(([fileId]) => fileId !== replacedPreview.id)
-                )
-          const nextMarkdownViewMode =
-            replacedPreview.id === id
-              ? s.markdownViewMode
-              : Object.fromEntries(
-                  Object.entries(s.markdownViewMode).filter(
-                    ([fileId]) => fileId !== replacedPreview.id
-                  )
-                )
-          const nextEditorViewMode =
-            replacedPreview.id === id
-              ? s.editorViewMode
-              : Object.fromEntries(
-                  Object.entries(s.editorViewMode).filter(
-                    ([fileId]) => fileId !== replacedPreview.id
-                  )
-                )
-          // Why: editorCursorLine entries accumulate per file; clean up the
-          // evicted preview's entry so it does not leak across tab replacements.
-          const nextEditorCursorLine =
-            replacedPreview.id === id
-              ? s.editorCursorLine
-              : Object.fromEntries(
-                  Object.entries(s.editorCursorLine).filter(
-                    ([fileId]) => fileId !== replacedPreview.id
-                  )
-                )
-          // Replace in-place to preserve tab position
-          newFiles = s.openFiles.map((f, i) =>
-            i === existingPreviewIdx
-              ? { ...file, id, isDirty: false, isPreview: true, runtimeEnvironmentId }
-              : f
-          )
-          // Swap the old preview ID for the new one in the stored tab bar order
-          const prevOrder = s.tabBarOrderByWorktree?.[worktreeId]
-          const previewTabBarUpdate = prevOrder
-            ? {
-                tabBarOrderByWorktree: {
-                  ...s.tabBarOrderByWorktree,
-                  [worktreeId]: prevOrder.map((eid) => (eid === replacedPreview.id ? id : eid))
-                }
-              }
-            : {}
-          // Why: link-activation replaces previews by default, so users walking
-          // A → B → C can't reach A via Cmd/Ctrl+Shift+T unless we push the
-          // evicted preview onto the recently-closed stack. Gated with
-          // recordReplacedPreview so file-explorer single-click (which
-          // semantically *wants* silent eviction) is unaffected.
-          let nextRecentlyClosed = s.recentlyClosedEditorTabsByWorktree
-          if (recordReplacedPreview && replacedPreview.id !== id) {
-            const { id: _rid, isDirty: _rdirty, ...snap } = replacedPreview
-            const stack = s.recentlyClosedEditorTabsByWorktree[worktreeId] ?? []
-            nextRecentlyClosed = {
-              ...s.recentlyClosedEditorTabsByWorktree,
-              [worktreeId]: [snap as ClosedEditorTabSnapshot, ...stack].slice(
-                0,
-                MAX_RECENT_CLOSED_EDITOR_TABS
-              )
-            }
-          }
-          return {
-            openFiles: newFiles,
-            editorDrafts: nextEditorDrafts,
-            editorCursorLine: nextEditorCursorLine,
-            markdownViewMode: nextMarkdownViewMode,
-            editorViewMode: nextEditorViewMode,
-            recentlyClosedEditorTabsByWorktree: nextRecentlyClosed,
-            ...previewTabBarUpdate,
-            ...activeResult
-          }
+        const replacement: OpenFile = {
+          ...file,
+          id,
+          isDirty: false,
+          isPreview: true,
+          runtimeEnvironmentId
+        }
+        const previewReplacement = replaceGroupPreviewFile(
+          s,
+          worktreeId,
+          targetGroupId,
+          replacement,
+          recordReplacedPreview
+        )
+        if (previewReplacement) {
+          return { ...previewReplacement, ...activeResult }
         }
       }
 
@@ -1508,7 +1583,7 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
 
       return {
         openFiles: [
-          ...newFiles,
+          ...s.openFiles,
           {
             ...file,
             id,
@@ -2070,13 +2145,32 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
       if (file.isDirty === dirty && !needsPreviewClear) {
         return s
       }
-      return {
-        openFiles: s.openFiles.map((f) =>
-          f.id === fileId
-            ? { ...f, isDirty: dirty, ...(needsPreviewClear ? { isPreview: undefined } : {}) }
-            : f
-        )
+      const openFiles = s.openFiles.map((f) =>
+        f.id === fileId
+          ? { ...f, isDirty: dirty, ...(needsPreviewClear ? { isPreview: undefined } : {}) }
+          : f
+      )
+      // Why: editing a preview promotes it to a normal tab. We must also clear
+      // the unified Tab.isPreview so createUnifiedTab's preview eviction doesn't
+      // later mistake this (now-promoted) tab for the group's preview slot and
+      // close it. Editing promotes to a NORMAL tab, so leave isPinned untouched
+      // (unlike the double-click pinFile path). Only touch the map when actually
+      // promoting, to keep the per-keystroke no-op path allocation-free.
+      if (needsPreviewClear) {
+        const worktreeTabs = s.unifiedTabsByWorktree?.[file.worktreeId]
+        if (worktreeTabs?.some((t) => t.entityId === fileId && t.isPreview)) {
+          return {
+            openFiles,
+            unifiedTabsByWorktree: {
+              ...s.unifiedTabsByWorktree,
+              [file.worktreeId]: worktreeTabs.map((t) =>
+                t.entityId === fileId && t.isPreview ? { ...t, isPreview: false } : t
+              )
+            }
+          }
+        }
       }
+      return { openFiles }
     }),
 
   setExternalMutation: (fileId, mutation) =>
@@ -2100,12 +2194,31 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
     })),
 
   openDiff: (worktreeId, filePath, relativePath, language, staged, options) => {
+    const isPreview = options?.preview ?? false
     set((s) => {
       const diffSource: DiffSource = staged ? 'staged' : 'unstaged'
       const id = `${worktreeId}::diff::${diffSource}::${relativePath}`
+      // Why: scope preview replacement to the target group (split tab groups) so
+      // opening a diff preview in group B never evicts group A's preview. Resolve
+      // via the shared helper so eviction targets the same group the tab opens in.
+      const targetGroupId =
+        resolveEditorOpenTargetGroupId(s, worktreeId, options?.targetGroupId) ?? undefined
+      const activeResult = {
+        activeFileId: id,
+        activeTabType: 'editor' as const,
+        activeFileIdByWorktree: { ...s.activeFileIdByWorktree, [worktreeId]: id },
+        activeTabTypeByWorktree: { ...s.activeTabTypeByWorktree, [worktreeId]: 'editor' as const }
+      }
       const existing = s.openFiles.find((f) => f.id === id)
       if (existing) {
-        const needsUpdate = existing.mode !== 'diff' || existing.diffSource !== diffSource
+        // Opening non-preview pins; opening as preview preserves current state.
+        // Normalize undefined→false so re-clicking an already-open non-preview
+        // diff (preview setting off) doesn't spuriously rebuild openFiles.
+        const updatedPreview = isPreview ? (existing.isPreview ?? false) : false
+        const needsUpdate =
+          existing.mode !== 'diff' ||
+          existing.diffSource !== diffSource ||
+          (existing.isPreview ?? false) !== updatedPreview
         return {
           openFiles: needsUpdate
             ? s.openFiles.map((f) =>
@@ -2116,15 +2229,13 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
                       diffSource,
                       conflict: undefined,
                       skippedConflicts: undefined,
-                      conflictReview: undefined
+                      conflictReview: undefined,
+                      isPreview: updatedPreview
                     }
                   : f
               )
             : s.openFiles,
-          activeFileId: id,
-          activeTabType: 'editor',
-          activeFileIdByWorktree: { ...s.activeFileIdByWorktree, [worktreeId]: id },
-          activeTabTypeByWorktree: { ...s.activeTabTypeByWorktree, [worktreeId]: 'editor' }
+          ...activeResult
         }
       }
       const newFile: OpenFile = {
@@ -2138,14 +2249,26 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
         diffSource,
         conflict: undefined,
         skippedConflicts: undefined,
-        conflictReview: undefined
+        conflictReview: undefined,
+        ...(isPreview ? { isPreview: true } : {})
+      }
+      if (isPreview) {
+        // recordReplacedPreview=false: diff previews evict silently, with no
+        // recently-closed-stack entry (matches Explorer single-click semantics).
+        const previewReplacement = replaceGroupPreviewFile(
+          s,
+          worktreeId,
+          targetGroupId,
+          newFile,
+          false
+        )
+        if (previewReplacement) {
+          return { ...previewReplacement, ...activeResult }
+        }
       }
       return {
         openFiles: [...s.openFiles, newFile],
-        activeFileId: id,
-        activeTabType: 'editor',
-        activeFileIdByWorktree: { ...s.activeFileIdByWorktree, [worktreeId]: id },
-        activeTabTypeByWorktree: { ...s.activeTabTypeByWorktree, [worktreeId]: 'editor' }
+        ...activeResult
       }
     })
     void openWorkspaceEditorItem(
@@ -2154,17 +2277,31 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
       worktreeId,
       relativePath,
       'diff',
-      undefined,
+      isPreview,
       options?.targetGroupId
     )
   },
 
   openBranchDiff: (worktreeId, worktreePath, entry, compare, language, options) => {
+    const isPreview = options?.preview ?? false
     const branchCompare = toBranchCompareSnapshot(compare)
     const id = `${worktreeId}::diff::branch::${compare.baseRef}::${branchCompare.compareVersion}::${entry.path}`
     set((s) => {
+      // Why: scope preview replacement to the target group (split tab groups) so
+      // opening a diff preview in group B never evicts group A's preview. Resolve
+      // via the shared helper so eviction targets the same group the tab opens in.
+      const targetGroupId =
+        resolveEditorOpenTargetGroupId(s, worktreeId, options?.targetGroupId) ?? undefined
+      const activeResult = {
+        activeFileId: id,
+        activeTabType: 'editor' as const,
+        activeFileIdByWorktree: { ...s.activeFileIdByWorktree, [worktreeId]: id },
+        activeTabTypeByWorktree: { ...s.activeTabTypeByWorktree, [worktreeId]: 'editor' as const }
+      }
       const existing = s.openFiles.find((f) => f.id === id)
       if (existing) {
+        // Opening non-preview pins; opening as preview preserves current state.
+        const updatedPreview = isPreview ? existing.isPreview : false
         return {
           openFiles: s.openFiles.map((f) =>
             f.id === id
@@ -2176,14 +2313,12 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
                   branchOldPath: entry.oldPath,
                   conflict: undefined,
                   skippedConflicts: undefined,
-                  conflictReview: undefined
+                  conflictReview: undefined,
+                  isPreview: updatedPreview
                 }
               : f
           ),
-          activeFileId: id,
-          activeTabType: 'editor',
-          activeFileIdByWorktree: { ...s.activeFileIdByWorktree, [worktreeId]: id },
-          activeTabTypeByWorktree: { ...s.activeTabTypeByWorktree, [worktreeId]: 'editor' }
+          ...activeResult
         }
       }
       const newFile: OpenFile = {
@@ -2199,14 +2334,26 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
         branchOldPath: entry.oldPath,
         conflict: undefined,
         skippedConflicts: undefined,
-        conflictReview: undefined
+        conflictReview: undefined,
+        ...(isPreview ? { isPreview: true } : {})
+      }
+      if (isPreview) {
+        // recordReplacedPreview=false: diff previews evict silently, with no
+        // recently-closed-stack entry (matches Explorer single-click semantics).
+        const previewReplacement = replaceGroupPreviewFile(
+          s,
+          worktreeId,
+          targetGroupId,
+          newFile,
+          false
+        )
+        if (previewReplacement) {
+          return { ...previewReplacement, ...activeResult }
+        }
       }
       return {
         openFiles: [...s.openFiles, newFile],
-        activeFileId: id,
-        activeTabType: 'editor',
-        activeFileIdByWorktree: { ...s.activeFileIdByWorktree, [worktreeId]: id },
-        activeTabTypeByWorktree: { ...s.activeTabTypeByWorktree, [worktreeId]: 'editor' }
+        ...activeResult
       }
     })
     void openWorkspaceEditorItem(
@@ -2215,7 +2362,7 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
       worktreeId,
       entry.path,
       'diff',
-      undefined,
+      isPreview,
       options?.targetGroupId
     )
   },
@@ -2224,6 +2371,12 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
     const commitCompare = toCommitCompareSnapshot(compare)
     const id = `${worktreeId}::diff::commit::${commitCompare.compareVersion}::${entry.path}`
     set((s) => {
+      const activeResult = {
+        activeFileId: id,
+        activeTabType: 'editor' as const,
+        activeFileIdByWorktree: { ...s.activeFileIdByWorktree, [worktreeId]: id },
+        activeTabTypeByWorktree: { ...s.activeTabTypeByWorktree, [worktreeId]: 'editor' as const }
+      }
       const existing = s.openFiles.find((f) => f.id === id)
       if (existing) {
         return {
@@ -2241,10 +2394,7 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
                 }
               : f
           ),
-          activeFileId: id,
-          activeTabType: 'editor',
-          activeFileIdByWorktree: { ...s.activeFileIdByWorktree, [worktreeId]: id },
-          activeTabTypeByWorktree: { ...s.activeTabTypeByWorktree, [worktreeId]: 'editor' }
+          ...activeResult
         }
       }
       const newFile: OpenFile = {
@@ -2264,10 +2414,7 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
       }
       return {
         openFiles: [...s.openFiles, newFile],
-        activeFileId: id,
-        activeTabType: 'editor',
-        activeFileIdByWorktree: { ...s.activeFileIdByWorktree, [worktreeId]: id },
-        activeTabTypeByWorktree: { ...s.activeTabTypeByWorktree, [worktreeId]: 'editor' }
+        ...activeResult
       }
     })
     void openWorkspaceEditorItem(
@@ -2659,15 +2806,30 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
     )
   },
 
-  openCommitAllDiffs: (worktreeId, worktreePath, compare, entries, subject, message) => {
+  openCommitAllDiffs: (worktreeId, worktreePath, compare, entries, subject, message, preview) => {
+    const isPreview = preview ?? false
     const commitCompare = toCommitCompareSnapshot(compare, subject, message)
     const id = `${worktreeId}::all-diffs::commit::${commitCompare.commitOid}`
     const label = subject
       ? `Commit ${commitCompare.compareRef}: ${subject}`
       : `Commit ${commitCompare.compareRef}`
     set((s) => {
+      // Why: scope preview replacement to the target group (split tab groups) so
+      // opening a diff preview in group B never evicts group A's preview.
+      const targetGroupId =
+        s.activeGroupIdByWorktree?.[worktreeId] ??
+        s.groupsByWorktree?.[worktreeId]?.[0]?.id ??
+        undefined
+      const activeResult = {
+        activeFileId: id,
+        activeTabType: 'editor' as const,
+        activeFileIdByWorktree: { ...s.activeFileIdByWorktree, [worktreeId]: id },
+        activeTabTypeByWorktree: { ...s.activeTabTypeByWorktree, [worktreeId]: 'editor' as const }
+      }
       const existing = s.openFiles.find((f) => f.id === id)
       if (existing) {
+        // Opening non-preview pins; opening as preview preserves current state.
+        const updatedPreview = isPreview ? existing.isPreview : false
         return {
           openFiles: s.openFiles.map((f) =>
             f.id === id
@@ -2678,14 +2840,12 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
                   commitEntriesSnapshot: entries,
                   conflict: undefined,
                   skippedConflicts: undefined,
-                  conflictReview: undefined
+                  conflictReview: undefined,
+                  isPreview: updatedPreview
                 }
               : f
           ),
-          activeFileId: id,
-          activeTabType: 'editor',
-          activeFileIdByWorktree: { ...s.activeFileIdByWorktree, [worktreeId]: id },
-          activeTabTypeByWorktree: { ...s.activeTabTypeByWorktree, [worktreeId]: 'editor' }
+          ...activeResult
         }
       }
 
@@ -2702,17 +2862,29 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
         commitEntriesSnapshot: entries,
         conflict: undefined,
         skippedConflicts: undefined,
-        conflictReview: undefined
+        conflictReview: undefined,
+        ...(isPreview ? { isPreview: true } : {})
+      }
+      if (isPreview) {
+        // recordReplacedPreview=false: diff previews evict silently, with no
+        // recently-closed-stack entry (matches Explorer single-click semantics).
+        const previewReplacement = replaceGroupPreviewFile(
+          s,
+          worktreeId,
+          targetGroupId,
+          newFile,
+          false
+        )
+        if (previewReplacement) {
+          return { ...previewReplacement, ...activeResult }
+        }
       }
       return {
         openFiles: [...s.openFiles, newFile],
-        activeFileId: id,
-        activeTabType: 'editor',
-        activeFileIdByWorktree: { ...s.activeFileIdByWorktree, [worktreeId]: id },
-        activeTabTypeByWorktree: { ...s.activeTabTypeByWorktree, [worktreeId]: 'editor' }
+        ...activeResult
       }
     })
-    void openWorkspaceEditorItem(get(), id, worktreeId, label, 'diff')
+    void openWorkspaceEditorItem(get(), id, worktreeId, label, 'diff', isPreview)
   },
 
   // Cursor line tracking

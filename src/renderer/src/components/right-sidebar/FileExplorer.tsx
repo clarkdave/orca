@@ -50,6 +50,7 @@ function FileExplorerInner(): React.JSX.Element {
   const clearPendingExplorerReveal = useAppStore((s) => s.clearPendingExplorerReveal)
   const openFile = useAppStore((s) => s.openFile)
   const pinFile = useAppStore((s) => s.pinFile)
+  const previewEnabled = useAppStore((s) => s.settings?.editorPreviewTabsEnabled === true)
   const activeFileId = useAppStore((s) => s.activeFileId)
   const gitStatusByWorktree = useAppStore((s) => s.gitStatusByWorktree)
   const openFiles = useAppStore((s) => s.openFiles)
@@ -344,10 +345,25 @@ function FileExplorerInner(): React.JSX.Element {
     requestDeleteAll
   })
 
+  // Why: read live at double-click time so we see the active file the
+  // single-click just opened — including owner-qualified ids under SSH/multi
+  // runtime, which differ from node.path.
+  const getActiveFileForWorktree = useCallback((worktreeId: string) => {
+    const state = useAppStore.getState()
+    const activeId = state.activeFileIdByWorktree[worktreeId]
+    if (!activeId) {
+      return null
+    }
+    const file = state.openFiles.find((f) => f.id === activeId)
+    return file ? { id: file.id, filePath: file.filePath } : null
+  }, [])
+
   const { handleClick, handleDoubleClick, handleWheelCapture } = useFileExplorerHandlers({
     activeWorktreeId,
     openFile,
     pinFile,
+    getActiveFileForWorktree,
+    previewEnabled,
     toggleDir,
     loadDir,
     statPath,
