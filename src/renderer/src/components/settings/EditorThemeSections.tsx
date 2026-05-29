@@ -1,7 +1,7 @@
 import type { Dispatch, SetStateAction } from 'react'
 import type { GlobalSettings } from '../../../../shared/types'
 import { BUILTIN_EDITOR_THEME_NAMES } from '@/lib/editor-theme'
-import { ThemePicker } from './SettingsFormControls'
+import { SettingsSwitch, ThemePicker } from './SettingsFormControls'
 import { SearchableSetting } from './SearchableSetting'
 import { EditorThemePreview } from './EditorThemePreview'
 import {
@@ -98,24 +98,13 @@ export function LightEditorThemeSection({
             When disabled, light mode reuses the dark editor theme.
           </p>
         </div>
-        <button
-          role="switch"
-          aria-checked={settings.editorUseSeparateLightTheme}
-          onClick={() =>
-            updateSettings({
-              editorUseSeparateLightTheme: !settings.editorUseSeparateLightTheme
-            })
+        <SettingsSwitch
+          checked={settings.editorUseSeparateLightTheme}
+          onChange={() =>
+            updateSettings({ editorUseSeparateLightTheme: !settings.editorUseSeparateLightTheme })
           }
-          className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors ${
-            settings.editorUseSeparateLightTheme ? 'bg-foreground' : 'bg-muted-foreground/30'
-          }`}
-        >
-          <span
-            className={`pointer-events-none block size-3.5 rounded-full bg-background shadow-sm transition-transform ${
-              settings.editorUseSeparateLightTheme ? 'translate-x-4' : 'translate-x-0.5'
-            }`}
-          />
-        </button>
+          ariaLabel="Use Separate Theme In Light Mode"
+        />
       </SearchableSetting>
 
       {settings.editorUseSeparateLightTheme ? (
