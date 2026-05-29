@@ -13,6 +13,7 @@ export type SettingsNavTarget =
   | 'git'
   | 'tasks'
   | 'appearance'
+  | 'editor'
   | 'input'
   | 'floating-workspace'
   | 'terminal'

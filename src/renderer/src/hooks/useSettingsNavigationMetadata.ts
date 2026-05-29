@@ -9,6 +9,7 @@ import {
   Blocks,
   Bot,
   Cable,
+  FileCode,
   FlaskConical,
   GitBranch,
   Globe,
@@ -46,6 +47,7 @@ import { COMMIT_MESSAGE_AI_PANE_SEARCH_ENTRIES } from '@/components/settings/com
 import { TASKS_PANE_SEARCH_ENTRIES } from '@/components/settings/tasks-search'
 import { FLOATING_WORKSPACE_SEARCH_ENTRIES } from '@/components/settings/floating-workspace-search'
 import { APPEARANCE_PANE_SEARCH_ENTRIES } from '@/components/settings/appearance-search'
+import { EDITOR_PANE_SEARCH_ENTRIES } from '@/components/settings/editor-search'
 import { INPUT_PANE_SEARCH_ENTRIES } from '@/components/settings/input-search'
 import { getTerminalPaneSearchEntries } from '@/components/settings/terminal-search'
 import { QUICK_COMMANDS_PANE_SEARCH_ENTRIES } from '@/components/settings/quick-commands-search'
@@ -253,6 +255,14 @@ export function buildSettingsNavigationMetadata({
       description: 'Theme, zoom, app and terminal appearance, sidebars, and status bar.',
       icon: Palette,
       searchEntries: APPEARANCE_PANE_SEARCH_ENTRIES,
+      group: 'interface'
+    },
+    {
+      id: 'editor',
+      title: 'Editor',
+      description: 'Editor and diff theme.',
+      icon: FileCode,
+      searchEntries: EDITOR_PANE_SEARCH_ENTRIES,
       group: 'interface'
     },
     {
