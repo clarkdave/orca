@@ -30,13 +30,14 @@ import { isDiffComment } from '@/lib/diff-comment-compat'
 import { installEditorSaveShortcut } from './editor-shortcuts'
 import { DiffSectionBody } from './DiffSectionBody'
 import { useDiffSectionLayoutMetrics } from './useDiffSectionLayoutMetrics'
+import { resolveEffectiveEditorThemeName } from '@/lib/editor-theme'
+import type { GlobalSettings } from '../../../../shared/types'
 
 export function DiffSectionItem({
   section,
   index,
   isBranchMode,
   sideBySide,
-  isDark,
   settings,
   sectionHeight,
   worktreeId,
@@ -60,8 +61,14 @@ export function DiffSectionItem({
   index: number
   isBranchMode: boolean
   sideBySide: boolean
-  isDark: boolean
-  settings: { terminalFontSize?: number; terminalFontFamily?: string } | null
+  // Why: also reads the editor-theme fields below so the section can resolve the
+  // user's selected Monaco theme; callers already pass the full GlobalSettings.
+  settings:
+    | ({ terminalFontSize?: number; terminalFontFamily?: string } & Pick<
+        GlobalSettings,
+        'theme' | 'editorThemeDark' | 'editorThemeLight' | 'editorUseSeparateLightTheme'
+      >)
+    | null
   sectionHeight: number | undefined
   worktreeId?: string
   loadSection: (index: number) => void
@@ -115,6 +122,7 @@ export function DiffSectionItem({
     settings?.terminalFontSize ?? 13,
     editorFontZoomLevel
   )
+  const editorTheme = resolveEffectiveEditorThemeName(settings)
 
   const [modifiedEditor, setModifiedEditor] = useState<monacoEditor.ICodeEditor | null>(null)
   const diffEditorRef = useRef<monacoEditor.IStandaloneDiffEditor | null>(null)
@@ -419,7 +427,7 @@ export function DiffSectionItem({
           addLineCommentLabel={addLineCommentLabel}
           isBranchMode={isBranchMode}
           sideBySide={sideBySide}
-          isDark={isDark}
+          editorTheme={editorTheme}
           language={language}
           modelPathBase={modelPathBase}
           isEditable={isEditable}

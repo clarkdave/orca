@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { monaco } from '@/lib/monaco-setup'
 import { computeEditorFontSize } from '@/lib/editor-font-zoom'
-import { resolveDocumentTheme } from '@/lib/document-theme'
+import { resolveEffectiveEditorThemeName } from '@/lib/editor-theme'
 import { useAppStore } from '@/store'
 import { cn } from '@/lib/utils'
 
@@ -52,13 +52,15 @@ export default function MonacoCodeExcerpt({
     editorFontZoomLevel
   )
   const fontFamily = settings?.terminalFontFamily || 'monospace'
-  const isDark = resolveDocumentTheme(settings?.theme ?? 'system')
+  const editorTheme = resolveEffectiveEditorThemeName(settings)
   const code = useMemo(() => lines.join('\n'), [lines])
   const [htmlLines, setHtmlLines] = useState<string[]>(() => lines.map(() => ''))
 
+  // Why: Monaco themes are global; re-apply imperatively whenever the resolved
+  // editor theme changes so excerpts stay in sync with mounted editors.
   useEffect(() => {
-    monaco.editor.setTheme(isDark ? 'vs-dark' : 'vs')
-  }, [isDark])
+    monaco.editor.setTheme(editorTheme)
+  }, [editorTheme])
 
   useEffect(() => {
     if (lines.length === 0) {

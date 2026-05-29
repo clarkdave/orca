@@ -34,7 +34,7 @@ import {
 import { monaco } from '@/lib/monaco-setup'
 import { computeEditorFontSize } from '@/lib/editor-font-zoom'
 import { getConnectionId } from '@/lib/connection-context'
-import { resolveDocumentTheme } from '@/lib/document-theme'
+import { resolveEffectiveEditorThemeName } from '@/lib/editor-theme'
 import { useAppStore } from '@/store'
 import { scrollTopCache, setWithLRU } from '@/lib/scroll-cache'
 import { cn } from '@/lib/utils'
@@ -303,7 +303,7 @@ function CodeCell({
   const fontSize = computeEditorFontSize(settings?.terminalFontSize ?? 13, editorFontZoomLevel)
   const lineCount = Math.max(3, source.split('\n').length + 1)
   const editorHeight = Math.min(520, Math.max(96, lineCount * (fontSize + 8)))
-  const isDark = resolveDocumentTheme(settings?.theme ?? 'system')
+  const editorTheme = resolveEffectiveEditorThemeName(settings)
   const lines = useMemo(
     () => (source.length > 0 ? source.replace(/\n$/, '').split('\n') : ['']),
     [source]
@@ -330,9 +330,11 @@ function CodeCell({
     })
   }, [])
 
+  // Why: Monaco themes are global; re-apply imperatively whenever the resolved
+  // editor theme changes so notebook cells stay in sync with mounted editors.
   useEffect(() => {
-    monaco.editor.setTheme(isDark ? 'vs-dark' : 'vs')
-  }, [isDark])
+    monaco.editor.setTheme(editorTheme)
+  }, [editorTheme])
 
   if (!active) {
     return (
@@ -364,7 +366,7 @@ function CodeCell({
         height={editorHeight}
         defaultLanguage={cell.language}
         language={cell.language}
-        theme={isDark ? 'vs-dark' : 'vs'}
+        theme={editorTheme}
         value={source}
         onMount={handleMount}
         onChange={(value) => onChange(value ?? '')}
