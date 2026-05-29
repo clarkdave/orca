@@ -2041,6 +2041,11 @@ export type GlobalSettings = {
   terminalUseSeparateLightTheme: boolean
   terminalThemeLight: string
   terminalDividerColorLight: string
+  /** Why: '' means no custom editor theme is chosen, so the resolver falls
+   *  back to Monaco's built-in vs-dark / vs themes. */
+  editorThemeDark: string
+  editorThemeLight: string
+  editorUseSeparateLightTheme: boolean
   terminalInactivePaneOpacity: number
   terminalActivePaneOpacity: number
   terminalPaneOpacityTransitionMs: number
