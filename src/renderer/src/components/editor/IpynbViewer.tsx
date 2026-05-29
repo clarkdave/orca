@@ -35,6 +35,7 @@ import { monaco } from '@/lib/monaco-setup'
 import { computeEditorFontSize } from '@/lib/editor-font-zoom'
 import { getConnectionId } from '@/lib/connection-context'
 import { resolveEffectiveEditorThemeName } from '@/lib/editor-theme'
+import { useSystemPrefersDark } from '@/components/terminal-pane/use-system-prefers-dark'
 import { useAppStore } from '@/store'
 import { scrollTopCache, setWithLRU } from '@/lib/scroll-cache'
 import { cn } from '@/lib/utils'
@@ -293,6 +294,7 @@ function CodeCell({
   onSaveRequest: () => Promise<void>
 }): React.JSX.Element {
   const settings = useAppStore((s) => s.settings)
+  const systemPrefersDark = useSystemPrefersDark()
   const editorFontZoomLevel = useAppStore((s) => s.editorFontZoomLevel)
   const onDeactivateRef = useRef(onDeactivate)
   const onSaveRequestRef = useRef(onSaveRequest)
@@ -303,7 +305,7 @@ function CodeCell({
   const fontSize = computeEditorFontSize(settings?.terminalFontSize ?? 13, editorFontZoomLevel)
   const lineCount = Math.max(3, source.split('\n').length + 1)
   const editorHeight = Math.min(520, Math.max(96, lineCount * (fontSize + 8)))
-  const editorTheme = resolveEffectiveEditorThemeName(settings)
+  const editorTheme = resolveEffectiveEditorThemeName(settings, systemPrefersDark)
   const lines = useMemo(
     () => (source.length > 0 ? source.replace(/\n$/, '').split('\n') : ['']),
     [source]

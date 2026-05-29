@@ -31,6 +31,7 @@ import { installEditorSaveShortcut } from './editor-shortcuts'
 import { DiffSectionBody } from './DiffSectionBody'
 import { useDiffSectionLayoutMetrics } from './useDiffSectionLayoutMetrics'
 import { resolveEffectiveEditorThemeName } from '@/lib/editor-theme'
+import { useSystemPrefersDark } from '@/components/terminal-pane/use-system-prefers-dark'
 import type { GlobalSettings } from '../../../../shared/types'
 
 export function DiffSectionItem({
@@ -94,6 +95,7 @@ export function DiffSectionItem({
   modifiedEditorsRef: MutableRefObject<Map<number, monacoEditor.IStandaloneCodeEditor>>
   handleSectionSaveRef: MutableRefObject<(index: number) => Promise<void>>
 }): React.JSX.Element {
+  const systemPrefersDark = useSystemPrefersDark()
   const editorFontZoomLevel = useAppStore((s) => s.editorFontZoomLevel)
   const addDiffComment = useAppStore((s) => s.addDiffComment)
   const deleteDiffComment = useAppStore((s) => s.deleteDiffComment)
@@ -122,7 +124,7 @@ export function DiffSectionItem({
     settings?.terminalFontSize ?? 13,
     editorFontZoomLevel
   )
-  const editorTheme = resolveEffectiveEditorThemeName(settings)
+  const editorTheme = resolveEffectiveEditorThemeName(settings, systemPrefersDark)
 
   const [modifiedEditor, setModifiedEditor] = useState<monacoEditor.ICodeEditor | null>(null)
   const diffEditorRef = useRef<monacoEditor.IStandaloneDiffEditor | null>(null)

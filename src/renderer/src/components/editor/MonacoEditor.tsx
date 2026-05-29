@@ -11,6 +11,7 @@ import { scrollTopCache, cursorPositionCache, setWithLRU } from '@/lib/scroll-ca
 import '@/lib/monaco-setup'
 import { computeEditorFontSize } from '@/lib/editor-font-zoom'
 import { resolveEffectiveEditorThemeName } from '@/lib/editor-theme'
+import { useSystemPrefersDark } from '@/components/terminal-pane/use-system-prefers-dark'
 import { registerFileSearchSelectedTextProvider } from '@/lib/file-search-selection'
 
 import { useContextualCopySetup } from './useContextualCopySetup'
@@ -122,6 +123,7 @@ export default function MonacoEditor({
   propsRef.current = { relativePath, language, onSave }
 
   const settings = useAppStore((s) => s.settings)
+  const systemPrefersDark = useSystemPrefersDark()
   const editorFontZoomLevel = useAppStore((s) => s.editorFontZoomLevel)
   const setPendingEditorReveal = useAppStore((s) => s.setPendingEditorReveal)
   const setEditorCursorLine = useAppStore((s) => s.setEditorCursorLine)
@@ -175,7 +177,7 @@ export default function MonacoEditor({
   const [commentPopover, setCommentPopover] = useState<MarkdownCommentPopoverState | null>(null)
   const [selectionAnnotationTarget, setSelectionAnnotationTarget] =
     useState<MonacoMarkdownSelectionAnnotationTarget | null>(null)
-  const editorTheme = resolveEffectiveEditorThemeName(settings)
+  const editorTheme = resolveEffectiveEditorThemeName(settings, systemPrefersDark)
 
   const updateMarkdownCompletionDocuments = useCallback((): void => {
     const modelKey = editorRef.current?.getModel()?.uri.toString() ?? null

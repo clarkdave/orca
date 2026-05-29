@@ -19,6 +19,7 @@ import { isDiffComment } from '@/lib/diff-comment-compat'
 import { installEditorSaveShortcut } from './editor-shortcuts'
 import { diffEditorScrollbarOptions } from './diff-editor-scrollbar-options'
 import { resolveEffectiveEditorThemeName } from '@/lib/editor-theme'
+import { useSystemPrefersDark } from '@/components/terminal-pane/use-system-prefers-dark'
 
 type DiffViewerProps = {
   modelKey: string
@@ -67,6 +68,7 @@ export default function DiffViewer({
   onSave
 }: DiffViewerProps): React.JSX.Element {
   const settings = useAppStore((s) => s.settings)
+  const systemPrefersDark = useSystemPrefersDark()
   const editorFontZoomLevel = useAppStore((s) => s.editorFontZoomLevel)
   const addDiffComment = useAppStore((s) => s.addDiffComment)
   const deleteDiffComment = useAppStore((s) => s.deleteDiffComment)
@@ -87,7 +89,7 @@ export default function DiffViewer({
     settings?.terminalFontSize ?? 13,
     editorFontZoomLevel
   )
-  const editorTheme = resolveEffectiveEditorThemeName(settings)
+  const editorTheme = resolveEffectiveEditorThemeName(settings, systemPrefersDark)
 
   const diffEditorRef = useRef<editor.IStandaloneDiffEditor | null>(null)
   const diffBodyRef = useRef<HTMLDivElement | null>(null)

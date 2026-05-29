@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { monaco } from '@/lib/monaco-setup'
 import { computeEditorFontSize } from '@/lib/editor-font-zoom'
 import { resolveEffectiveEditorThemeName } from '@/lib/editor-theme'
+import { useSystemPrefersDark } from '@/components/terminal-pane/use-system-prefers-dark'
 import { useAppStore } from '@/store'
 import { cn } from '@/lib/utils'
 
@@ -46,13 +47,14 @@ export default function MonacoCodeExcerpt({
   language
 }: MonacoCodeExcerptProps): React.JSX.Element {
   const settings = useAppStore((s) => s.settings)
+  const systemPrefersDark = useSystemPrefersDark()
   const editorFontZoomLevel = useAppStore((s) => s.editorFontZoomLevel)
   const editorFontSize = computeEditorFontSize(
     settings?.terminalFontSize ?? 13,
     editorFontZoomLevel
   )
   const fontFamily = settings?.terminalFontFamily || 'monospace'
-  const editorTheme = resolveEffectiveEditorThemeName(settings)
+  const editorTheme = resolveEffectiveEditorThemeName(settings, systemPrefersDark)
   const code = useMemo(() => lines.join('\n'), [lines])
   const [htmlLines, setHtmlLines] = useState<string[]>(() => lines.map(() => ''))
 
