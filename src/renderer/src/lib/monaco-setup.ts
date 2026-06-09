@@ -11,6 +11,7 @@ import { registerAstroLanguage } from './monaco-languages/register-astro'
 import { registerSvelteLanguage } from './monaco-languages/register-svelte'
 import { registerVueLanguage } from './monaco-languages/register-vue'
 import { installMonacoDiffEditorDisposalGuard } from './monaco-diff-editor-disposal'
+import { EDITOR_THEME_CATALOG } from './editor-themes'
 
 globalThis.MonacoEnvironment = {
   getWorker(_workerId, label) {
@@ -73,6 +74,12 @@ registerVueLanguage(monaco)
 registerSvelteLanguage(monaco)
 registerAstroLanguage(monaco)
 installMonacoDiffEditorDisposalGuard(monaco)
+
+// Why: themes are registered once at module init so any chosen theme id
+// resolves immediately when passed to setTheme or the theme prop.
+for (const entry of Object.values(EDITOR_THEME_CATALOG)) {
+  monaco.editor.defineTheme(entry.id, entry.data)
+}
 
 // Configure Monaco to use the locally bundled editor instead of CDN
 loader.config({ monaco })

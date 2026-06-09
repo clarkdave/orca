@@ -1,6 +1,10 @@
 import type { ITheme } from '@xterm/xterm'
 import { getTheme, getThemeNames } from './terminal-themes-data'
+import { getSystemPrefersDark } from './system-color-scheme'
 import type { GlobalSettings } from '../../../shared/types'
+
+// Re-exported for existing importers that reach for it via this module.
+export { getSystemPrefersDark }
 
 export const BUILTIN_TERMINAL_THEME_NAMES = getThemeNames()
 
@@ -16,13 +20,6 @@ export type EffectiveTerminalAppearance = {
   dividerColor: string
   theme: ITheme | null
   systemPrefersDark: boolean
-}
-
-export function getSystemPrefersDark(): boolean {
-  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
-    return true
-  }
-  return window.matchMedia('(prefers-color-scheme: dark)').matches
 }
 
 export function getBuiltinTheme(name: string): ITheme | null {

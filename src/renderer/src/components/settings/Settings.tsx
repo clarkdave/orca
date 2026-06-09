@@ -19,6 +19,7 @@ import { DEFAULT_APP_FONT_FAMILY, getDefaultVoiceSettings } from '../../../../sh
 import { GeneralPane } from './GeneralPane'
 import { BrowserPane } from './BrowserPane'
 import { AppearancePane } from './AppearancePane'
+import { EditorPane } from './EditorPane'
 import { InputPane } from './InputPane'
 import { ShortcutsPane } from './ShortcutsPane'
 import { TerminalPane } from './TerminalPane'
@@ -1170,6 +1171,17 @@ function Settings(): React.JSX.Element {
                       systemPrefersDark={systemPrefersDark}
                       ghostty={ghostty}
                     />
+                  ) : null}
+                </SettingsSection>
+
+                <SettingsSection
+                  id="editor"
+                  title="Editor"
+                  description="Editor and diff theme."
+                  searchEntries={getSectionSearchEntries('editor')}
+                >
+                  {isSectionMounted('editor') ? (
+                    <EditorPane settings={settings} updateSettings={updateSettings} />
                   ) : null}
                 </SettingsSection>
 

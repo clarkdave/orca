@@ -238,6 +238,9 @@ type ThemePickerProps = {
   query: string
   onQueryChange: (value: string) => void
   onSelectTheme: (theme: string) => void
+  /** Display names to choose from. Defaults to the terminal theme catalog so
+   *  the terminal callers stay unchanged; the editor pane passes its own list. */
+  themeNames?: string[]
 }
 
 type ColorFieldProps = {
@@ -278,12 +281,13 @@ export function ThemePicker({
   selectedTheme,
   query,
   onQueryChange,
-  onSelectTheme
+  onSelectTheme,
+  themeNames = BUILTIN_TERMINAL_THEME_NAMES
 }: ThemePickerProps): React.JSX.Element {
   const normalizedQuery = query.trim().toLowerCase()
-  const filteredThemes = BUILTIN_TERMINAL_THEME_NAMES.filter((theme) =>
-    theme.toLowerCase().includes(normalizedQuery)
-  ).slice(0, MAX_THEME_RESULTS)
+  const filteredThemes = themeNames
+    .filter((theme) => theme.toLowerCase().includes(normalizedQuery))
+    .slice(0, MAX_THEME_RESULTS)
 
   return (
     <div className="space-y-3">
@@ -301,9 +305,7 @@ export function ThemePicker({
           <span>Selected: {selectedTheme}</span>
           <span>
             Showing {filteredThemes.length}
-            {normalizedQuery
-              ? ` matching "${query.trim()}"`
-              : ` of ${BUILTIN_TERMINAL_THEME_NAMES.length}`}
+            {normalizedQuery ? ` matching "${query.trim()}"` : ` of ${themeNames.length}`}
           </span>
         </div>
         <ScrollArea className="h-64">

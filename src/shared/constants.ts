@@ -210,6 +210,11 @@ export function getDefaultSettings(homedir: string): GlobalSettings {
     terminalUseSeparateLightTheme: true,
     terminalThemeLight: 'Builtin Tango Light',
     terminalDividerColorLight: '#d4d4d8',
+    // '' means no custom editor theme; the resolver falls back to Monaco's
+    // built-in vs-dark / vs themes.
+    editorThemeDark: '',
+    editorThemeLight: '',
+    editorUseSeparateLightTheme: false,
     terminalInactivePaneOpacity: 0.8,
     terminalActivePaneOpacity: 1,
     terminalPaneOpacityTransitionMs: 140,
